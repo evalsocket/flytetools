@@ -1,0 +1,47 @@
+name: End to End tests
+
+on:
+  workflow_call:
+jobs:
+  integration:
+    name: Integration tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v2
+      - id: load-docker-cache
+        name: Load Docker Cache
+        uses: actions/cache@v1
+        with:
+          path: /tmp/tmp/docker-images
+          key: /tmp/docker-images-${{ github.event.after }}
+      - uses: unionai/flytectl-setup-action@v0.0.1
+        name: Setup flytectl
+      - name: Create Sandbox Cluster
+        run: |
+          cp /tmp/tmp/docker-images/snapshot-builder.tar snapshot.tar
+          flytectl config init
+          flytectl sandbox start --source=$(pwd)
+      - name: Prime docker cache
+        run: |
+          flytectl sandbox exec -- docker load -i /root/snapshot.tar
+      - name: Upgrade Helm charts
+        run:  |
+          flytectl sandbox exec -- helm repo add flyteorg https://flyteorg.github.io/flyte
+          flytectl sandbox exec -- helm repo update
+          flytectl sandbox exec -- helm upgrade flyte -n flyte --kubeconfig=/etc/rancher/k3s/k3s.yaml flyteorg/flyte -f /flyteorg/share/flyte/values.yaml -f /root/script/integration/k8s/values.yaml --set ${{ github.event.repository.name }}.image.repository=flyteorg/${{ github.event.repository.name }},${{ github.event.repository.name }}.image.tag=builder
+      - name: Integration
+        env:
+          KUBECONFIG: /home/runner/.flyte/k3s/k3s.yaml
+        run: |
+          # attempt to clean up some unneeded data: https://github.com/actions/virtual-environments/issues/2840#issuecomment-790492173
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /opt/ghc
+          sudo rm -rf "/usr/local/share/boost"
+          sudo rm -rf "$AGENT_TOOLSDIRECTORY"
+          kubectl cluster-info
+          kubectl get pods -n kube-system
+          kubectl get pods -n flyte
+          echo "current-context:" $(kubectl config current-context)
+          echo "environment-kubeconfig:" ${KUBECONFIG}
+          make k8s_integration_execute
