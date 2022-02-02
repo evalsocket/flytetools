@@ -1,4 +1,4 @@
-name: End to End tests
+name: Integration tests
 
 on:
   workflow_call:
